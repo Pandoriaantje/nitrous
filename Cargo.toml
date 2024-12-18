@@ -22,6 +22,9 @@ harness = false
 # CLI
 structopt = "0.3.26"
 
+# Multi-Threading
+rayon = "1.6"
+
 # Utility
 rand = "0.8.5"
 
