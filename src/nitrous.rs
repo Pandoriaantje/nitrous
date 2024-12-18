@@ -4,9 +4,10 @@
 use std::fs::{create_dir, File};
 use std::io::{BufRead, BufReader, Write};
 use rand::Rng;
-use human_panic::{setup_panic, Metadata};
-use crate::cli::ProxyType;
+use human_panic::setup_panic;
 use rayon::prelude::*;
+
+use crate::cli::ProxyType;
 
 pub struct Nitrous;
 
@@ -18,12 +19,7 @@ impl Nitrous {
 
         // Logging and Panic Handling
         pretty_env_logger::init();
-        setup_panic(Metadata {
-            name: env!("CARGO_PKG_NAME").into(),
-            version: env!("CARGO_PKG_VERSION").into(),
-            authors: env!("CARGO_PKG_AUTHORS").into(),
-            homepage: env!("CARGO_PKG_HOMEPAGE").into(),
-        });
+        setup_panic!();
 
         crate::cli::Cli::execute().await;
     }
