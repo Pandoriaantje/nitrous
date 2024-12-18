@@ -10,9 +10,11 @@ use tokio::io::{self, AsyncBufReadExt, BufReader};
 use tokio::sync::Semaphore;
 use reqwest::{Client, Proxy};
 use futures::stream::{FuturesUnordered, StreamExt};
+use std::io::Write;
 use std::time::Instant;
 use tracing::{info, error};
 use tracing_subscriber;
+use human_panic::setup_panic;
 
 use crate::cli::ProxyType;
 
@@ -20,12 +22,9 @@ pub struct Nitrous;
 
 impl Nitrous {
     pub async fn execute() {
-        // Initialize tracing and environment
         tracing_subscriber::fmt::init();
         dotenv::dotenv().ok();
         std::env::set_var("RUST_LOG", "nitrous=trace");
-
-        // Logging and Panic Handling
         pretty_env_logger::init();
         setup_panic!();
 
@@ -39,13 +38,11 @@ impl Nitrous {
     pub fn generate(amount: usize, debug: bool) {
         Self::initialize();
 
-        // Open file for writing codes
         let mut codes_file = std::fs::File::create(".nitrous/codes.txt")
             .expect("Failed to create codes file");
 
-        // Generate codes in parallel
         let codes: Vec<String> = (0..amount)
-            .into_par_iter() // Rayon parallel iterator
+            .into_par_iter()
             .map(|_| {
                 rand::thread_rng()
                     .sample_iter(rand::distributions::Alphanumeric)
@@ -55,7 +52,6 @@ impl Nitrous {
             })
             .collect();
 
-        // Write codes to the file
         codes.iter().for_each(|code| {
             writeln!(codes_file, "{}", code).unwrap();
 
@@ -73,7 +69,6 @@ impl Nitrous {
     ) {
         Self::initialize();
 
-        // Create necessary directories
         let _ = create_dir(".nitrous/check/");
         let codes_file = TokioFile::open(codes_file_name)
             .await
@@ -83,34 +78,28 @@ impl Nitrous {
             .await
             .expect("Failed to open proxy file");
 
-        let mut invalid = tokio::sync::Mutex::new(
+        let invalid = Arc::new(tokio::sync::Mutex::new(
             std::fs::File::create(".nitrous/check/invalid.txt").expect("Failed to create invalid file"),
-        );
-        let mut valid = tokio::sync::Mutex::new(
+        ));
+        let valid = Arc::new(tokio::sync::Mutex::new(
             std::fs::File::create(".nitrous/check/valid.txt").expect("Failed to create valid file"),
-        );
+        ));
 
-        // Read and shuffle proxies once
         let proxies: Vec<String> = BufReader::new(proxies_file)
             .lines()
-            .filter_map(Result::ok)
-            .collect::<Vec<_>>()
-            .await;
+            .collect::<Result<Vec<_>, _>>()
+            .await
+            .expect("Failed to read proxies");
 
         let proxies = Arc::new(proxies);
-        if proxies.is_empty() {
-            panic!("Proxy file is empty or contains no valid proxies.");
-        }
-
-        // Read codes
         let codes: Vec<String> = BufReader::new(codes_file)
             .lines()
-            .filter_map(Result::ok)
-            .collect::<Vec<_>>()
-            .await;
+            .collect::<Result<Vec<_>, _>>()
+            .await
+            .expect("Failed to read codes");
 
         let start = Instant::now();
-        let semaphore = Arc::new(Semaphore::new(10)); // Concurrency limit
+        let semaphore = Arc::new(Semaphore::new(10));
 
         let tasks: FuturesUnordered<_> = codes
             .into_iter()
