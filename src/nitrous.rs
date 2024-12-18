@@ -4,6 +4,7 @@
 use std::fs::create_dir;
 use std::sync::Arc;
 use rand::{seq::SliceRandom, Rng};
+use rayon::prelude::*;
 use tokio::fs::File as TokioFile;
 use tokio::io::{self, AsyncBufReadExt, BufReader};
 use tokio::sync::Semaphore;
@@ -36,24 +37,33 @@ impl Nitrous {
     }
 
     pub fn generate(amount: usize, debug: bool) {
-        Self::initialize();
+    Self::initialize();
 
-        let mut codes = std::fs::File::create(".nitrous/codes.txt").unwrap();
+    // Open file for writing codes
+    let mut codes_file = std::fs::File::create(".nitrous/codes.txt")
+        .expect("Failed to create codes file");
 
-        for _ in 0..amount {
-            let code = rand::thread_rng()
+    // Generate codes in parallel
+    let codes: Vec<String> = (0..amount)
+        .into_par_iter() // Rayon parallel iterator
+        .map(|_| {
+            rand::thread_rng()
                 .sample_iter(rand::distributions::Alphanumeric)
                 .take(16)
                 .map(char::from)
-                .collect::<String>();
+                .collect::<String>()
+        })
+        .collect();
 
-            writeln!(codes, "{}", code).unwrap();
+    // Write codes to the file
+    codes.iter().for_each(|code| {
+        writeln!(codes_file, "{}", code).unwrap();
 
-            if debug {
-                println!("Generated code: {}", code);
-            }
+        if debug {
+            println!("Generated code: {}", code);
         }
-    }
+    });
+}
 
     pub async fn check(
         codes_file_name: &str,
