@@ -111,6 +111,7 @@ impl Nitrous {
                 let semaphore = semaphore.clone();
                 let valid = valid.clone();
                 let invalid = invalid.clone();
+                let proxy_type = &proxy_type;
 
                 async move {
                     let _permit = semaphore.acquire().await;
@@ -122,7 +123,7 @@ impl Nitrous {
                         .proxy(
                             Proxy::all(format!(
                                 "{}://{}",
-                                match proxy_type {
+                                match *proxy_type {
                                     ProxyType::Http => "http",
                                     ProxyType::Socks4 => "socks4",
                                     ProxyType::Socks5 | ProxyType::Tor => "socks5h",
@@ -137,7 +138,7 @@ impl Nitrous {
                     let status = client
                         .get(format!(
                             "{}://discordapp.com/api/v6/entitlements/gift-codes/{}?with_application=false&with_subscription_plan=true",
-                            if proxy_type == ProxyType::Http { "http" } else { "https" },
+                            if *proxy_type == ProxyType::Http { "http" } else { "https" },
                             code
                         ))
                         .send()
@@ -163,6 +164,8 @@ impl Nitrous {
                 }
             })
             .collect();
+
+        let mut tasks = tasks;
 
         let mut valid_count = 0;
         let mut invalid_count = 0;
