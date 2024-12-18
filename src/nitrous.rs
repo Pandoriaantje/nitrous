@@ -3,9 +3,7 @@
 
 use std::fs::{create_dir, File};
 use std::io::{BufRead, BufReader, Write};
-use std::sync::Arc;
-
-use rand::{seq::IteratorRandom, Rng};
+use rand::Rng;
 use human_panic::setup_panic;
 use crate::cli::ProxyType;
 use rayon::prelude::*;
@@ -18,9 +16,9 @@ impl Nitrous {
         dotenv::dotenv().ok();
         std::env::set_var("RUST_LOG", "nitrous=trace");
 
-        // Logging
+        // Logging and Panic Handling
         pretty_env_logger::init();
-        setup_panic();
+        setup_panic(human_panic::Metadata::default);
 
         crate::cli::Cli::execute().await;
     }
@@ -118,7 +116,7 @@ impl Nitrous {
 }
 
 // Helper function for code validation
-fn check_code_with_proxy(proxy: &str, code: &str) -> Result<(), ()> {
+fn check_code_with_proxy(_proxy: &str, code: &str) -> Result<(), ()> {
     // Simulated API request logic
     if code.starts_with("NITRO") {
         Ok(())
