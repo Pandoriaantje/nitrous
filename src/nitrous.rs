@@ -37,33 +37,33 @@ impl Nitrous {
     }
 
     pub fn generate(amount: usize, debug: bool) {
-    Self::initialize();
+        Self::initialize();
 
-    // Open file for writing codes
-    let mut codes_file = std::fs::File::create(".nitrous/codes.txt")
-        .expect("Failed to create codes file");
+        // Open file for writing codes
+        let mut codes_file = std::fs::File::create(".nitrous/codes.txt")
+            .expect("Failed to create codes file");
 
-    // Generate codes in parallel
-    let codes: Vec<String> = (0..amount)
-        .into_par_iter() // Rayon parallel iterator
-        .map(|_| {
-            rand::thread_rng()
-                .sample_iter(rand::distributions::Alphanumeric)
-                .take(16)
-                .map(char::from)
-                .collect::<String>()
-        })
-        .collect();
+        // Generate codes in parallel
+        let codes: Vec<String> = (0..amount)
+            .into_par_iter() // Rayon parallel iterator
+            .map(|_| {
+                rand::thread_rng()
+                    .sample_iter(rand::distributions::Alphanumeric)
+                    .take(16)
+                    .map(char::from)
+                    .collect::<String>()
+            })
+            .collect();
 
-    // Write codes to the file
-    codes.iter().for_each(|code| {
-        writeln!(codes_file, "{}", code).unwrap();
+        // Write codes to the file
+        codes.iter().for_each(|code| {
+            writeln!(codes_file, "{}", code).unwrap();
 
-        if debug {
-            println!("Generated code: {}", code);
-        }
-    });
-}
+            if debug {
+                println!("Generated code: {}", code);
+            }
+        });
+    }
 
     pub async fn check(
         codes_file_name: &str,
@@ -83,19 +83,24 @@ impl Nitrous {
             .await
             .expect("Failed to open proxy file");
 
-        let mut invalid = std::fs::File::create(".nitrous/check/invalid.txt")
-            .expect("Failed to create invalid file");
-        let mut valid = std::fs::File::create(".nitrous/check/valid.txt")
-            .expect("Failed to create valid file");
+        let mut invalid = tokio::sync::Mutex::new(
+            std::fs::File::create(".nitrous/check/invalid.txt").expect("Failed to create invalid file"),
+        );
+        let mut valid = tokio::sync::Mutex::new(
+            std::fs::File::create(".nitrous/check/valid.txt").expect("Failed to create valid file"),
+        );
 
-        // Read proxies and shuffle
+        // Read and shuffle proxies once
         let proxies: Vec<String> = BufReader::new(proxies_file)
             .lines()
             .filter_map(Result::ok)
             .collect::<Vec<_>>()
             .await;
-        let mut proxies = proxies;
-        proxies.shuffle(&mut rand::thread_rng());
+
+        let proxies = Arc::new(proxies);
+        if proxies.is_empty() {
+            panic!("Proxy file is empty or contains no valid proxies.");
+        }
 
         // Read codes
         let codes: Vec<String> = BufReader::new(codes_file)
@@ -105,19 +110,22 @@ impl Nitrous {
             .await;
 
         let start = Instant::now();
-        let semaphore = Arc::new(Semaphore::new(10)); // Limit concurrency to 10
+        let semaphore = Arc::new(Semaphore::new(10)); // Concurrency limit
 
         let tasks: FuturesUnordered<_> = codes
             .into_iter()
             .map(|code| {
-                let proxy = proxies
-                    .choose(&mut rand::thread_rng())
-                    .expect("No proxies available")
-                    .to_string();
+                let proxies = proxies.clone();
                 let semaphore = semaphore.clone();
+                let valid = valid.clone();
+                let invalid = invalid.clone();
 
                 async move {
                     let _permit = semaphore.acquire().await;
+                    let proxy = proxies
+                        .choose(&mut rand::thread_rng())
+                        .expect("No proxies available");
+
                     let client = Client::builder()
                         .proxy(
                             Proxy::all(format!(
@@ -145,7 +153,21 @@ impl Nitrous {
                         .map(|res| res.status().as_u16())
                         .unwrap_or(0);
 
-                    (code, proxy, status)
+                    if status == 200 {
+                        let mut valid = valid.lock().await;
+                        writeln!(valid, "{}", code).unwrap();
+                        if debug {
+                            info!("Valid: {} via {}", code, proxy);
+                        }
+                    } else {
+                        let mut invalid = invalid.lock().await;
+                        writeln!(invalid, "{}", code).unwrap();
+                        if debug {
+                            error!("Invalid: {} via {}", code, proxy);
+                        }
+                    }
+
+                    status
                 }
             })
             .collect();
@@ -153,19 +175,11 @@ impl Nitrous {
         let mut valid_count = 0;
         let mut invalid_count = 0;
 
-        while let Some((code, proxy, status)) = tasks.next().await {
+        while let Some(status) = tasks.next().await {
             if status == 200 {
-                writeln!(valid, "{}", code).unwrap();
                 valid_count += 1;
-                if debug {
-                    info!("Valid: {} via {}", code, proxy);
-                }
             } else {
-                writeln!(invalid, "{}", code).unwrap();
                 invalid_count += 1;
-                if debug {
-                    error!("Invalid: {} via {}", code, proxy);
-                }
             }
         }
 
