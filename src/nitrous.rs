@@ -4,7 +4,7 @@
 use std::fs::{create_dir, File};
 use std::io::{BufRead, BufReader, Write};
 use rand::Rng;
-use human_panic::setup_panic;
+use human_panic::Metadata;
 use crate::cli::ProxyType;
 use rayon::prelude::*;
 
@@ -12,16 +12,21 @@ pub struct Nitrous;
 
 impl Nitrous {
     pub async fn execute() {
-        // Environment setup
-        dotenv::dotenv().ok();
-        std::env::set_var("RUST_LOG", "nitrous=trace");
+    // Environment setup
+    dotenv::dotenv().ok();
+    std::env::set_var("RUST_LOG", "nitrous=trace");
 
-        // Logging and Panic Handling
-        pretty_env_logger::init();
-        setup_panic(human_panic::Metadata::default);
+    // Logging and Panic Handling
+    pretty_env_logger::init();
+    setup_panic(Metadata {
+        name: env!("CARGO_PKG_NAME").into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        authors: env!("CARGO_PKG_AUTHORS").into(),
+        homepage: env!("CARGO_PKG_HOMEPAGE").into(),
+    });
 
-        crate::cli::Cli::execute().await;
-    }
+    crate::cli::Cli::execute().await;
+}
 
     pub fn initialize() {
         let _ = create_dir(".nitrous");
