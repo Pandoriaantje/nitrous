@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::fs::create_dir;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use rand::{seq::SliceRandom, Rng};
 use rayon::prelude::*;
 use tokio::fs::File as TokioFile;
@@ -18,14 +18,20 @@ use human_panic::setup_panic;
 
 use crate::cli::ProxyType;
 
+static INIT: Once = Once::new();
+
 pub struct Nitrous;
 
 impl Nitrous {
     pub async fn execute() {
-        tracing_subscriber::fmt::init();
+        // Ensure logger is initialized only once
+        INIT.call_once(|| {
+            tracing_subscriber::fmt::init();
+            pretty_env_logger::init();
+        });
+
         dotenv::dotenv().ok();
         std::env::set_var("RUST_LOG", "nitrous=trace");
-        pretty_env_logger::init();
         setup_panic!();
 
         crate::cli::Cli::execute().await;
