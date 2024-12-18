@@ -24,18 +24,18 @@ pub struct Nitrous;
 
 impl Nitrous {
     pub async fn execute() {
-        // Ensure logger is initialized only once
-        INIT.call_once(|| {
-            tracing_subscriber::fmt::init();
-            pretty_env_logger::init();
-        });
+    // Initialize the logger safely
+    INIT.call_once(|| {
+        let _ = tracing_subscriber::fmt::try_init(); // Safely initialize tracing
+        let _ = pretty_env_logger::try_init();      // Safely initialize pretty_env_logger
+    });
 
-        dotenv::dotenv().ok();
-        std::env::set_var("RUST_LOG", "nitrous=trace");
-        setup_panic!();
+    dotenv::dotenv().ok();
+    std::env::set_var("RUST_LOG", "nitrous=trace");
+    setup_panic!();
 
-        crate::cli::Cli::execute().await;
-    }
+    crate::cli::Cli::execute().await;
+}
 
     pub fn initialize() {
         let _ = create_dir(".nitrous");
