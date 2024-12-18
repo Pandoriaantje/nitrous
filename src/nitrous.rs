@@ -7,6 +7,7 @@ use std::{
 };
 
 use rand::{seq::IteratorRandom, Rng};
+use human_panic::PanicHookInfo; // Ensure this is the correct import
 
 use crate::cli::ProxyType;
 
@@ -19,7 +20,7 @@ impl Nitrous {
 
     // Logging
     pretty_env_logger::init();
-    human_panic::setup_panic!();
+    human_panic::setup_panic!(); // This should now use PanicHookInfo internally
 
     crate::cli::Cli::execute().await;
   }
