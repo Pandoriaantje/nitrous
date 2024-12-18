@@ -6,7 +6,7 @@ use std::sync::Arc;
 use rand::{seq::SliceRandom, Rng};
 use rayon::prelude::*;
 use tokio::fs::File as TokioFile;
-use tokio::io::{self, AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Semaphore;
 use reqwest::{Client, Proxy};
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -85,21 +85,24 @@ impl Nitrous {
             std::fs::File::create(".nitrous/check/valid.txt").expect("Failed to create valid file"),
         ));
 
+        // Read and process proxies
         let proxies: Vec<String> = BufReader::new(proxies_file)
             .lines()
-            .collect::<Result<Vec<_>, _>>()
-            .await
-            .expect("Failed to read proxies");
+            .filter_map(|line| async { line.ok() })
+            .collect::<Vec<_>>()
+            .await;
 
         let proxies = Arc::new(proxies);
+
+        // Read and process codes
         let codes: Vec<String> = BufReader::new(codes_file)
             .lines()
-            .collect::<Result<Vec<_>, _>>()
-            .await
-            .expect("Failed to read codes");
+            .filter_map(|line| async { line.ok() })
+            .collect::<Vec<_>>()
+            .await;
 
         let start = Instant::now();
-        let semaphore = Arc::new(Semaphore::new(10));
+        let semaphore = Arc::new(Semaphore::new(10)); // Concurrency limit
 
         let tasks: FuturesUnordered<_> = codes
             .into_iter()
