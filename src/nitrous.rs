@@ -24,18 +24,18 @@ pub struct Nitrous;
 
 impl Nitrous {
     pub async fn execute() {
-    // Initialize the logger safely
-    INIT.call_once(|| {
-        let _ = tracing_subscriber::fmt::try_init(); // Safely initialize tracing
-        let _ = pretty_env_logger::try_init();      // Safely initialize pretty_env_logger
-    });
+        // Initialize the logger safely
+        INIT.call_once(|| {
+            let _ = tracing_subscriber::fmt::try_init(); // Safely initialize tracing
+            let _ = pretty_env_logger::try_init();      // Safely initialize pretty_env_logger
+        });
 
-    dotenv::dotenv().ok();
-    std::env::set_var("RUST_LOG", "nitrous=trace");
-    setup_panic!();
+        dotenv::dotenv().ok();
+        std::env::set_var("RUST_LOG", "nitrous=trace");
+        setup_panic!();
 
-    crate::cli::Cli::execute().await;
-}
+        crate::cli::Cli::execute().await;
+    }
 
     pub fn initialize() {
         let _ = create_dir(".nitrous");
@@ -72,6 +72,7 @@ impl Nitrous {
         debug: bool,
         proxy_type: ProxyType,
         proxy_file: &str,
+        concurrency: usize, // New parameter for concurrency
     ) {
         Self::initialize();
 
@@ -108,7 +109,7 @@ impl Nitrous {
         }
 
         let start = Instant::now();
-        let semaphore = Arc::new(Semaphore::new(10)); // Concurrency limit
+        let semaphore = Arc::new(Semaphore::new(concurrency)); // Use the concurrency parameter here
 
         let tasks: FuturesUnordered<_> = codes
             .into_iter()
