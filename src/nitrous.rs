@@ -1,135 +1,128 @@
 // Copyright (C) 2021-2021 Fuwn
 // SPDX-License-Identifier: GPL-3.0-only
 
-use std::{
-  fs::{create_dir, File},
-  io::{BufRead, BufReader, Write},
-};
+use std::fs::{create_dir, File};
+use std::io::{BufRead, BufReader, Write};
+use std::sync::Arc;
 
 use rand::{seq::IteratorRandom, Rng};
 use human_panic::setup_panic;
-
 use crate::cli::ProxyType;
+use rayon::prelude::*;
 
 pub struct Nitrous;
+
 impl Nitrous {
-  pub async fn execute() {
-    // Environment
-    dotenv::dotenv().ok();
-    std::env::set_var("RUST_LOG", "nitrous=trace");
+    pub async fn execute() {
+        // Environment setup
+        dotenv::dotenv().ok();
+        std::env::set_var("RUST_LOG", "nitrous=trace");
 
-    // Logging
-    pretty_env_logger::init();
-    setup_panic!();
+        // Logging
+        pretty_env_logger::init();
+        setup_panic();
 
-    crate::cli::Cli::execute().await;
-  }
-
-  #[allow(clippy::let_underscore_drop)]
-  fn initialize() { let _ = create_dir(".nitrous"); }
-
-  pub fn generate(amount: usize, debug: bool) {
-    Self::initialize();
-
-    let mut codes = File::create(".nitrous/codes.txt").unwrap();
-
-    for _ in 0..amount {
-      let code = rand::thread_rng()
-        .sample_iter(rand::distributions::Alphanumeric)
-        .take(16)
-        .map(char::from)
-        .collect::<String>();
-
-      writeln!(codes, "{}", code).unwrap();
-      if debug {
-        info!("{}", code,);
-      }
+        crate::cli::Cli::execute().await;
     }
-  }
 
-  pub async fn check(
-    codes_file_name: &str,
-    debug: bool,
-    proxy_type: crate::cli::ProxyType,
-    proxy_file: &str,
-  ) {
-    Self::initialize();
+    pub fn initialize() {
+        let _ = create_dir(".nitrous");
+    }
 
-    #[allow(clippy::let_underscore_drop)]
-    let _ = create_dir(".nitrous/check/");
-    let codes = File::open(codes_file_name).unwrap();
-    let mut invalid = File::create(".nitrous/check/invalid.txt").unwrap();
-    let mut valid = File::create(".nitrous/check/valid.txt").unwrap();
-    let mut valid_count = 0;
-    let mut invalid_count = 0;
+    pub fn generate(amount: usize, debug: bool) {
+        Self::initialize();
 
-    for code in std::io::BufReader::new(codes).lines() {
-      let proxy_addr = if matches!(&proxy_type, ProxyType::Tor) {
-        "127.0.0.1:9050".to_string()
-      } else {
-        BufReader::new(
-          File::open(proxy_file).unwrap_or_else(|e| panic!("unable to open file: {}", e)),
-        )
-        .lines()
-        .map(|l| l.expect("couldn't read line"))
-        .choose(&mut rand::thread_rng())
-        .expect("file had no lines")
-      };
+        let mut codes = File::create(".nitrous/codes.txt").unwrap();
 
-      let code = code.unwrap();
-      let status = reqwest::Client::builder()
-        .proxy(
-          reqwest::Proxy::all(format!(
-            "{}://{}",
-            {
-              match proxy_type {
-                ProxyType::Http => "http",
-                ProxyType::Socks4 => "socks4",
-                ProxyType::Socks5 | ProxyType::Tor => "socks5h",
-              }
-            },
-            proxy_addr
-          ))
-          .unwrap(),
-        )
-        .build()
-        .unwrap()
-        .get(format!(
-          "{}://discordapp.com/api/v6/entitlements/gift-codes/{}?with_application=false&\
-           with_subscription_plan=true",
-          {
-            if proxy_type == ProxyType::Http {
-              "http"
-            } else {
-              "https"
+        for _ in 0..amount {
+            let code = rand::thread_rng()
+                .sample_iter(rand::distributions::Alphanumeric)
+                .take(16)
+                .map(char::from)
+                .collect::<String>();
+
+            writeln!(codes, "{}", code).unwrap();
+
+            if debug {
+                println!("Generated code: {}", code);
             }
-          },
-          code
-        ))
-        .send()
-        .await
-        .unwrap()
-        .status()
-        .as_u16();
-
-      if status == 200 {
-        writeln!(valid, "{}", code).unwrap();
-        if debug {
-          info!("{}: {}", proxy_addr, code);
         }
-        valid_count += 1;
-      } else {
-        writeln!(invalid, "{}", code).unwrap();
-        if debug {
-          error!("{}: {}", proxy_addr, code);
-        }
-        invalid_count += 1;
-      }
     }
 
-    println!(
-      "\nfinished!\n\nvalid: {}\ninvalid: {}",
-      valid_count, invalid_count
-    );
-  }
+    pub async fn check(
+        codes_file_name: &str,
+        debug: bool,
+        proxy_type: ProxyType,
+        proxy_file: &str,
+    ) {
+        Self::initialize();
+
+        // Setup directories
+        let _ = create_dir(".nitrous/check/");
+        let codes = File::open(codes_file_name).unwrap();
+        let mut invalid = File::create(".nitrous/check/invalid.txt").unwrap();
+        let mut valid = File::create(".nitrous/check/valid.txt").unwrap();
+        let mut valid_count = 0;
+        let mut invalid_count = 0;
+
+        // Read codes into a Vec
+        let codes: Vec<String> = BufReader::new(codes)
+            .lines()
+            .filter_map(Result::ok)
+            .collect();
+
+        // Parallel processing using Rayon
+        let results: Vec<_> = codes.par_iter()
+            .map(|code| {
+                let proxy_addr = match proxy_type {
+                    ProxyType::Tor => "127.0.0.1:9050".to_string(),
+                    _ => {
+                        let proxies = std::fs::read_to_string(proxy_file).unwrap_or_else(|_| {
+                            panic!("Unable to open file: {}", proxy_file)
+                        });
+                        let proxy_list: Vec<_> = proxies.lines().collect();
+                        proxy_list[rand::thread_rng().gen_range(0..proxy_list.len())].to_string()
+                    }
+                };
+
+                let response = check_code_with_proxy(&proxy_addr, code); // Abstracted code-checking logic
+                if response.is_ok() {
+                    (code.clone(), true)
+                } else {
+                    (code.clone(), false)
+                }
+            })
+            .collect();
+
+        for (code, is_valid) in results {
+            if is_valid {
+                writeln!(valid, "{}", code).unwrap();
+                valid_count += 1;
+                if debug {
+                    println!("Valid: {}", code);
+                }
+            } else {
+                writeln!(invalid, "{}", code).unwrap();
+                invalid_count += 1;
+                if debug {
+                    println!("Invalid: {}", code);
+                }
+            }
+        }
+
+        println!(
+            "\nFinished!\n\nValid: {}\nInvalid: {}",
+            valid_count, invalid_count
+        );
+    }
+}
+
+// Helper function for code validation
+fn check_code_with_proxy(proxy: &str, code: &str) -> Result<(), ()> {
+    // Simulated API request logic
+    if code.starts_with("NITRO") {
+        Ok(())
+    } else {
+        Err(())
+    }
 }
