@@ -35,4 +35,6 @@ mod nitrous;
 use crate::nitrous::Nitrous;
 
 #[tokio::main]
-async fn main() { Nitrous::execute().await; }
+async fn main() {
+    Nitrous::execute().await;
+}
