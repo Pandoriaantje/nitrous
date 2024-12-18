@@ -4,7 +4,6 @@
 #![feature(
   type_ascription,
   hash_set_entry,
-  type_name_of_val,
   decl_macro,
   proc_macro_hygiene
 )]
