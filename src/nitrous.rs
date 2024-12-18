@@ -1,11 +1,17 @@
 // Copyright (C) 2021-2021 Fuwn
 // SPDX-License-Identifier: GPL-3.0-only
 
-use std::fs::{create_dir, File};
-use std::io::{BufRead, BufReader, Write};
-use rand::Rng;
-use human_panic::setup_panic;
-use rayon::prelude::*;
+use std::fs::create_dir;
+use std::sync::Arc;
+use rand::{seq::SliceRandom, Rng};
+use tokio::fs::File as TokioFile;
+use tokio::io::{self, AsyncBufReadExt, BufReader};
+use tokio::sync::Semaphore;
+use reqwest::{Client, Proxy};
+use futures::stream::{FuturesUnordered, StreamExt};
+use std::time::Instant;
+use tracing::{info, error};
+use tracing_subscriber;
 
 use crate::cli::ProxyType;
 
@@ -13,7 +19,8 @@ pub struct Nitrous;
 
 impl Nitrous {
     pub async fn execute() {
-        // Environment setup
+        // Initialize tracing and environment
+        tracing_subscriber::fmt::init();
         dotenv::dotenv().ok();
         std::env::set_var("RUST_LOG", "nitrous=trace");
 
@@ -31,7 +38,7 @@ impl Nitrous {
     pub fn generate(amount: usize, debug: bool) {
         Self::initialize();
 
-        let mut codes = File::create(".nitrous/codes.txt").unwrap();
+        let mut codes = std::fs::File::create(".nitrous/codes.txt").unwrap();
 
         for _ in 0..amount {
             let code = rand::thread_rng()
@@ -56,72 +63,107 @@ impl Nitrous {
     ) {
         Self::initialize();
 
-        // Setup directories
+        // Create necessary directories
         let _ = create_dir(".nitrous/check/");
-        let codes = File::open(codes_file_name).unwrap();
-        let mut invalid = File::create(".nitrous/check/invalid.txt").unwrap();
-        let mut valid = File::create(".nitrous/check/valid.txt").unwrap();
-        let mut valid_count = 0;
-        let mut invalid_count = 0;
+        let codes_file = TokioFile::open(codes_file_name)
+            .await
+            .expect("Failed to open codes file");
 
-        // Read codes into a Vec
-        let codes: Vec<String> = BufReader::new(codes)
+        let proxies_file = TokioFile::open(proxy_file)
+            .await
+            .expect("Failed to open proxy file");
+
+        let mut invalid = std::fs::File::create(".nitrous/check/invalid.txt")
+            .expect("Failed to create invalid file");
+        let mut valid = std::fs::File::create(".nitrous/check/valid.txt")
+            .expect("Failed to create valid file");
+
+        // Read proxies and shuffle
+        let proxies: Vec<String> = BufReader::new(proxies_file)
             .lines()
             .filter_map(Result::ok)
-            .collect();
+            .collect::<Vec<_>>()
+            .await;
+        let mut proxies = proxies;
+        proxies.shuffle(&mut rand::thread_rng());
 
-        // Parallel processing using Rayon
-        let results: Vec<_> = codes.par_iter()
+        // Read codes
+        let codes: Vec<String> = BufReader::new(codes_file)
+            .lines()
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>()
+            .await;
+
+        let start = Instant::now();
+        let semaphore = Arc::new(Semaphore::new(10)); // Limit concurrency to 10
+
+        let tasks: FuturesUnordered<_> = codes
+            .into_iter()
             .map(|code| {
-                let proxy_addr = match proxy_type {
-                    ProxyType::Tor => "127.0.0.1:9050".to_string(),
-                    _ => {
-                        let proxies = std::fs::read_to_string(proxy_file).unwrap_or_else(|_| {
-                            panic!("Unable to open file: {}", proxy_file)
-                        });
-                        let proxy_list: Vec<_> = proxies.lines().collect();
-                        proxy_list[rand::thread_rng().gen_range(0..proxy_list.len())].to_string()
-                    }
-                };
+                let proxy = proxies
+                    .choose(&mut rand::thread_rng())
+                    .expect("No proxies available")
+                    .to_string();
+                let semaphore = semaphore.clone();
 
-                let response = check_code_with_proxy(&proxy_addr, code); // Abstracted code-checking logic
-                if response.is_ok() {
-                    (code.clone(), true)
-                } else {
-                    (code.clone(), false)
+                async move {
+                    let _permit = semaphore.acquire().await;
+                    let client = Client::builder()
+                        .proxy(
+                            Proxy::all(format!(
+                                "{}://{}",
+                                match proxy_type {
+                                    ProxyType::Http => "http",
+                                    ProxyType::Socks4 => "socks4",
+                                    ProxyType::Socks5 | ProxyType::Tor => "socks5h",
+                                },
+                                proxy
+                            ))
+                            .expect("Invalid proxy configuration"),
+                        )
+                        .build()
+                        .expect("Failed to build client");
+
+                    let status = client
+                        .get(format!(
+                            "{}://discordapp.com/api/v6/entitlements/gift-codes/{}?with_application=false&with_subscription_plan=true",
+                            if proxy_type == ProxyType::Http { "http" } else { "https" },
+                            code
+                        ))
+                        .send()
+                        .await
+                        .map(|res| res.status().as_u16())
+                        .unwrap_or(0);
+
+                    (code, proxy, status)
                 }
             })
             .collect();
 
-        for (code, is_valid) in results {
-            if is_valid {
+        let mut valid_count = 0;
+        let mut invalid_count = 0;
+
+        while let Some((code, proxy, status)) = tasks.next().await {
+            if status == 200 {
                 writeln!(valid, "{}", code).unwrap();
                 valid_count += 1;
                 if debug {
-                    println!("Valid: {}", code);
+                    info!("Valid: {} via {}", code, proxy);
                 }
             } else {
                 writeln!(invalid, "{}", code).unwrap();
                 invalid_count += 1;
                 if debug {
-                    println!("Invalid: {}", code);
+                    error!("Invalid: {} via {}", code, proxy);
                 }
             }
         }
 
         println!(
-            "\nFinished!\n\nValid: {}\nInvalid: {}",
-            valid_count, invalid_count
+            "\nFinished in {:?}!\n\nValid: {}\nInvalid: {}",
+            start.elapsed(),
+            valid_count,
+            invalid_count
         );
-    }
-}
-
-// Helper function for code validation
-fn check_code_with_proxy(_proxy: &str, code: &str) -> Result<(), ()> {
-    // Simulated API request logic
-    if code.starts_with("NITRO") {
-        Ok(())
-    } else {
-        Err(())
     }
 }
