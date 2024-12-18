@@ -1,3 +1,6 @@
+// Copyright (C) 2021-2021 Fuwn
+// SPDX-License-Identifier: GPL-3.0-only
+
 use std::fs::create_dir;
 use std::sync::Arc;
 use rand::{seq::SliceRandom, Rng};
