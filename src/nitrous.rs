@@ -1,6 +1,3 @@
-// Copyright (C) 2021-2021 Fuwn
-// SPDX-License-Identifier: GPL-3.0-only
-
 use std::fs::create_dir;
 use std::sync::Arc;
 use rand::{seq::SliceRandom, Rng};
@@ -88,18 +85,18 @@ impl Nitrous {
         // Read and process proxies
         let proxies: Vec<String> = BufReader::new(proxies_file)
             .lines()
-            .filter_map(|line| async { line.ok() })
-            .collect::<Vec<_>>()
-            .await;
+            .collect::<Result<Vec<_>, _>>()
+            .await
+            .expect("Failed to read proxies");
 
         let proxies = Arc::new(proxies);
 
         // Read and process codes
         let codes: Vec<String> = BufReader::new(codes_file)
             .lines()
-            .filter_map(|line| async { line.ok() })
-            .collect::<Vec<_>>()
-            .await;
+            .collect::<Result<Vec<_>, _>>()
+            .await
+            .expect("Failed to read codes");
 
         let start = Instant::now();
         let semaphore = Arc::new(Semaphore::new(10)); // Concurrency limit
