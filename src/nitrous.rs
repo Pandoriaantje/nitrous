@@ -9,7 +9,7 @@ use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Semaphore;
 use reqwest::{Client, Proxy};
-use futures::stream::{FuturesUnordered, StreamExt, TryStreamExt};
+use futures::stream::{FuturesUnordered, StreamExt};
 use std::io::Write;
 use std::time::Instant;
 use tracing::{info, error};
@@ -86,20 +86,20 @@ impl Nitrous {
         ));
 
         // Read and process proxies
-        let proxies: Vec<String> = BufReader::new(proxies_file)
-            .lines()
-            .try_collect()
-            .await
-            .expect("Failed to read proxies");
+        let mut proxies = Vec::new();
+        let mut proxies_stream = BufReader::new(proxies_file).lines();
+        while let Some(line) = proxies_stream.next_line().await.expect("Error reading proxies") {
+            proxies.push(line);
+        }
 
         let proxies = Arc::new(proxies);
 
         // Read and process codes
-        let codes: Vec<String> = BufReader::new(codes_file)
-            .lines()
-            .try_collect()
-            .await
-            .expect("Failed to read codes");
+        let mut codes = Vec::new();
+        let mut codes_stream = BufReader::new(codes_file).lines();
+        while let Some(line) = codes_stream.next_line().await.expect("Error reading codes") {
+            codes.push(line);
+        }
 
         let start = Instant::now();
         let semaphore = Arc::new(Semaphore::new(10)); // Concurrency limit
