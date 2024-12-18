@@ -88,18 +88,18 @@ impl Nitrous {
         // Read and process proxies
         let proxies: Vec<String> = BufReader::new(proxies_file)
             .lines()
-            .collect::<Result<Vec<_>, _>>()
-            .await
-            .expect("Failed to read proxies");
+            .map(|line| line.unwrap_or_else(|_| "".to_string()))
+            .collect::<Vec<String>>()
+            .await;
 
         let proxies = Arc::new(proxies);
 
         // Read and process codes
         let codes: Vec<String> = BufReader::new(codes_file)
             .lines()
-            .collect::<Result<Vec<_>, _>>()
-            .await
-            .expect("Failed to read codes");
+            .map(|line| line.unwrap_or_else(|_| "".to_string()))
+            .collect::<Vec<String>>()
+            .await;
 
         let start = Instant::now();
         let semaphore = Arc::new(Semaphore::new(10)); // Concurrency limit
